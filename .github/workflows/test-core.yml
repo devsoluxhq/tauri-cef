@@ -1,0 +1,150 @@
+# Copyright 2019-2024 Tauri Programme within The Commons Conservancy
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
+
+name: test core
+
+on:
+  push:
+    branches:
+      - dev
+  pull_request:
+    paths:
+      - '.github/workflows/test-core.yml'
+      - 'crates/**'
+      - '!crates/tauri/scripts/**'
+      - '!crates/tauri-cli/**'
+      - '!crates/tauri-bundler/**'
+      - '!crates/tauri-macos-sign/**'
+      - '!crates/tauri-schema-generator/**'
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_PROFILE_DEV_DEBUG: 0 # This would add unnecessary bloat to the target folder, decreasing cache efficiency.
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ${{ matrix.platform.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - {
+              target: x86_64-pc-windows-msvc,
+              os: windows-latest,
+              toolchain: '1.88',
+              cross: false,
+              command: 'test'
+            }
+          - {
+              target: x86_64-unknown-linux-gnu,
+              os: ubuntu-latest,
+              toolchain: '1.88',
+              cross: false,
+              command: 'test'
+            }
+          - {
+              target: aarch64-apple-darwin,
+              os: macos-14,
+              toolchain: '1.88',
+              cross: false,
+              command: 'test'
+            }
+          - {
+              target: aarch64-apple-ios,
+              os: macos-latest,
+              toolchain: '1.88',
+              cross: false,
+              command: 'build'
+            }
+          - {
+              target: aarch64-linux-android,
+              os: ubuntu-latest,
+              toolchain: '1.88',
+              cross: true,
+              command: 'build'
+            }
+        features:
+          - { args: --no-default-features, key: no-default }
+          - { args: --all-features, key: all }
+        exclude:
+          - platform: { target: aarch64-apple-ios }
+            features: { key: all }
+          - platform: { target: aarch64-linux-android }
+            features: { key: all }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.platform.toolchain }}
+          targets: ${{ matrix.platform.target }}
+
+      - name: install x86_64-apple-darwin target (required by bundler CEF helper on macOS)
+        if: ${{ startsWith(matrix.platform.os, 'macos-') }}
+        run: rustup target add x86_64-apple-darwin
+
+      - name: install Linux dependencies
+        if: contains(matrix.platform.target, 'unknown-linux')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y webkit2gtk-4.1 libxdo-dev libayatana-appindicator3-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.platform.target }}
+          save-if: ${{ matrix.features.key == 'all' }}
+
+      - name: Cache CEF
+        if: matrix.features.key == 'all'
+        id: cache-cef
+        uses: actions/cache@v5.0.3
+        with:
+          path: ~/.local/share/cef
+          key: cef-${{ matrix.platform.os }}-${{ hashFiles('Cargo.toml') }}
+
+      - name: ${{ steps.cache-cef.outputs.cache-hit && 'Use cache' || 'Export CEF' }}
+        if: matrix.features.key == 'all'
+        run: |
+          ${{ steps.cache-cef.outputs.cache-hit && 'echo "Cached CEF"'
+            || (matrix.platform.os == 'windows-latest'
+              && 'cargo install export-cef-dir && export-cef-dir --version 144.0.7 "$env:USERPROFILE/.local/share/cef"'
+              || 'cargo install export-cef-dir && export-cef-dir --version 144.0.7 "$HOME/.local/share/cef"')
+          }}
+          echo "CEF_PATH=${{ matrix.platform.os == 'windows-latest'
+            && '$env:USERPROFILE'
+            || '$HOME'
+          }}/.local/share/cef" >> "$${{ matrix.platform.os == 'windows-latest'
+            && 'env:'
+            || ''
+          }}GITHUB_ENV"
+          echo "${{ startsWith(matrix.platform.os, 'macos-')
+            && 'DYLD_FALLBACK_LIBRARY_PATH=$DYLD_FALLBACK_LIBRARY_PATH:$HOME/.local/share/cef:$HOME/.local/share/cef/Chromium Embedded Framework.framework/Libraries'
+            || (matrix.platform.os == 'windows-latest'
+              && 'PATH=$env:PATH;$env:USERPROFILE/.local/share/cef'
+              || 'LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$HOME/.local/share/cef') }}" >> "$${{ matrix.platform.os == 'windows-latest'
+                    && 'env:'
+                    || ''
+                  }}GITHUB_ENV"
+
+      - name: test tauri-utils
+        if: ${{ !matrix.platform.cross }}
+        # Using --lib --bins --tests to skip doc tests
+        run: cargo ${{ matrix.platform.command }} --target ${{ matrix.platform.target }} ${{ matrix.features.args }} --lib --bins --tests --manifest-path crates/tauri-utils/Cargo.toml
+
+      - name: test tauri
+        if: ${{ !matrix.platform.cross }}
+        run: cargo ${{ matrix.features.key == 'no-default' && 'check' || matrix.platform.command }} --target ${{ matrix.platform.target }} ${{ matrix.features.args }} --manifest-path crates/tauri/Cargo.toml
+
+      - name: test tauri (using cross)
+        if: ${{ matrix.platform.cross }}
+        run: |
+          cargo install cross --git https://github.com/cross-rs/cross --rev 51f46f296253d8122c927c5bb933e3c4f27cc317 --locked
+          cross ${{ matrix.features.key == 'no-default' && 'check' || matrix.platform.command }} --target ${{ matrix.platform.target }} ${{ matrix.features.args }} --manifest-path crates/tauri/Cargo.toml
