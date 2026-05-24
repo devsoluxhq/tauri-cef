@@ -2371,11 +2371,13 @@ fn handle_webview_message<T: UserEvent>(
         .and_then(|h| h.request_context())
         .and_then(|ctx| ctx.cookie_manager(Option::<&mut cef::CompletionCallback>::None))
       {
-        Some(manager) => manager.delete_cookies(
-          Option::<&cef::CefString>::None,
-          Option::<&cef::CefString>::None,
-          Option::<&mut cef::DeleteCookiesCallback>::None,
-        ),
+        Some(manager) => {
+          let _ = manager.delete_cookies(
+            Option::<&cef::CefString>::None,
+            Option::<&cef::CefString>::None,
+            Option::<&mut cef::DeleteCookiesCallback>::None,
+          );
+        }
         None => log::warn!(
           "[cef-clear] no cookie manager for webview_id={webview_id}; cookies not cleared"
         ),
