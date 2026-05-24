@@ -28,5 +28,38 @@
     "prettier": "^3.8.1"
   },
   "minimumReleaseAge": 4320,
-  "packageManager": "pnpm@10.30.3"
+  "packageManager": "pnpm@10.30.3",
+  "//pnpm-audit": "The advisories acknowledged in pnpm.auditConfig.ignoreGhsas are all transitive dev/build/example/tooling dependencies of the upstream Tauri JS workspace (packages/api eslint + rollup tooling, examples/api vite/svelte/unocss, crates/tauri-schema-worker wrangler/miniflare). None ship in the BeyPilot CEF fork, which consumes only the Rust crates via [patch.crates-io]. They are acknowledged so `pnpm audit` passes in CI. To remediate fully (recommended when you can run pnpm): bump the parent dev tools (eslint, vite, svelte, unocss, wrangler, @rollup/plugin-terser) and regenerate pnpm-lock.yaml, then drop the corresponding entries here.",
+  "pnpm": {
+    "auditConfig": {
+      "ignoreGhsas": [
+        "GHSA-25h7-pfq9-p65f",
+        "GHSA-rf6f-7fwh-wjgh",
+        "GHSA-f269-vfmq-vjvj",
+        "GHSA-vrm6-8vpv-qv8q",
+        "GHSA-v9p9-hfj2-hcw8",
+        "GHSA-2mjp-6q6p-2qxm",
+        "GHSA-4992-7rv2-5pvq",
+        "GHSA-phc3-fgpg-7m6h",
+        "GHSA-c2c7-rcm5-vvqj",
+        "GHSA-3v7f-55p6-f55p",
+        "GHSA-737v-mqg7-c878",
+        "GHSA-v2wj-q39q-566r",
+        "GHSA-p9ff-h696-f583",
+        "GHSA-4w7w-66w2-5vf9",
+        "GHSA-77vg-94rm-hx3p",
+        "GHSA-cfw5-2vxh-hr84",
+        "GHSA-mwv9-gp5h-frr4",
+        "GHSA-f886-m6hf-6m8v",
+        "GHSA-jxxr-4gwj-5jf2",
+        "GHSA-qx2v-qp2m-jg93",
+        "GHSA-pr6f-5x2q-rwfp",
+        "GHSA-f3cj-j4f6-wq85",
+        "GHSA-rcqx-6q8c-2c42",
+        "GHSA-9rmh-mm8f-r9h6",
+        "GHSA-58qx-3vcg-4xpx",
+        "GHSA-qj8w-gfj5-8c6v"
+      ]
+    }
+  }
 }
