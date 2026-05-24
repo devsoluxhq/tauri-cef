@@ -1,3 +1,26 @@
+# tauri-cef (BeyPilot CEF fork of the Tauri monorepo)
+
+> **This is a BeyPilot fork of the Tauri monorepo with Chromium Embedded
+> Framework (CEF) runtime support — not stock upstream Tauri.** The generic
+> upstream README below describes WRY/WebView2/WebKitGTK and does **not** reflect
+> this fork's CEF runtime.
+>
+> - **Integration crate:** `crates/tauri-runtime-cef` (public modules
+>   `notification`, `audio`, `permissions`). BeyPilot consumes it as a local path
+>   dependency and pins the whole fork via `[patch.crates-io]` in
+>   `app/src-tauri/Cargo.toml` (Tauri **2.10.x**, `cef` / `cef-dll-sys` pinned to
+>   `=146.4.1`).
+> - **Bundling:** the CEF-aware `crates/tauri-cli` (installed by BeyPilot's
+>   `scripts/ensure-tauri-cli.sh`) is required to bundle Chromium into the app;
+>   stock `@tauri-apps/cli` panics in `LibraryLoader::new`.
+> - **CEF runtime:** downloaded and cached on first build at `CEF_PATH`
+>   (e.g. `$HOME/Library/Caches/tauri-cef`).
+> - **Security:** provider child webviews (`acct_*`) are observation/scanner
+>   surfaces — scraping/observability runs natively via CDP, with **no JS
+>   injection** added into third-party origins.
+
+---
+
 <img src=".github/splash.png" alt="Tauri" />
 
 [![status](https://img.shields.io/badge/status-stable-blue.svg)](https://github.com/tauri-apps/tauri/tree/dev)
