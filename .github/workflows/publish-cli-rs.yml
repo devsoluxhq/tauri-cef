@@ -45,7 +45,7 @@ jobs:
             cross: true
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: 'Setup Rust'
         if: ${{ !matrix.config.cross }}
@@ -84,7 +84,7 @@ jobs:
 
       - name: Upload CLI
         if: ${{ !matrix.config.cross }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cargo-tauri-${{ matrix.config.rust_target }}${{ matrix.config.ext }}
           path: target/release-size-optimized/cargo-tauri${{ matrix.config.ext }}
@@ -92,7 +92,7 @@ jobs:
 
       - name: Upload CLI (cross)
         if: ${{ matrix.config.cross }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cargo-tauri-${{ matrix.config.rust_target }}${{ matrix.config.ext }}
           path: target/${{ matrix.config.rust_target }}/release-size-optimized/cargo-tauri${{ matrix.config.ext }}
@@ -104,10 +104,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download built CLIs
-        uses: actions/download-artifact@v4.1.7
+        uses: actions/download-artifact@v7
         with:
           path: outputs
 

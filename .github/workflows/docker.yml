@@ -17,7 +17,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: install stable
         uses: dtolnay/rust-toolchain@stable
@@ -31,7 +31,7 @@ jobs:
         run: cargo install cross --git https://github.com/cross-rs/cross
 
       - name: Upload cross
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cross
           path: '~/.cargo/bin/cross'
@@ -41,7 +41,7 @@ jobs:
         run: cargo build --manifest-path ./crates/tauri-cli/Cargo.toml
 
       - name: Upload CLI
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cargo-tauri
           path: crates/tauri-cli/target/debug/cargo-tauri
@@ -59,7 +59,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: install stable
         uses: dtolnay/rust-toolchain@stable
@@ -68,37 +68,37 @@ jobs:
 
       - run: npm i -g --force corepack
       - name: Setup node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 'lts/*'
 
       - name: Download cross
-        uses: actions/download-artifact@v4.1.7
+        uses: actions/download-artifact@v7
         with:
           name: cross
           path: '~/.cargo/bin'
 
       - name: Download CLI
-        uses: actions/download-artifact@v4.1.7
+        uses: actions/download-artifact@v7
         with:
           name: cargo-tauri
           path: 'examples/api'
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and export to Docker
-        uses: docker/build-push-action@v3
+        uses: docker/build-push-action@v7
         with:
           context: .docker/cross
           file: .docker/cross/${{ matrix.target.filename }}.Dockerfile
@@ -122,7 +122,7 @@ jobs:
           ./cargo-tauri build --runner cross --bundles deb --target ${{ matrix.target.name }} --verbose
 
       - name: Build and push
-        uses: docker/build-push-action@v3
+        uses: docker/build-push-action@v7
         with:
           context: .docker/cross
           file: .docker/cross/${{ matrix.target.filename }}.Dockerfile

@@ -19,12 +19,12 @@ jobs:
         platform: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - run: npm i -g --force corepack
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: 'pnpm'
@@ -74,7 +74,7 @@ jobs:
       - run-integration-tests
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - run: npm i -g --force corepack

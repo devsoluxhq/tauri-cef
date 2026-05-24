@@ -106,10 +106,10 @@ jobs:
     name: stable - ${{ matrix.settings.target }} - node@20
     runs-on: ${{ matrix.settings.host }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: npm i -g --force corepack
       - name: Setup node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         if: ${{ !matrix.settings.docker }}
         with:
           node-version: 20
@@ -145,7 +145,7 @@ jobs:
         shell: bash
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bindings-${{ matrix.settings.target }}
           path: packages/cli/${{ env.APP_NAME }}.*.node
@@ -154,10 +154,10 @@ jobs:
   #    runs-on: macos-10.15
   #    name: Build FreeBSD
   #    steps:
-  #      - uses: actions/checkout@v4
+  #      - uses: actions/checkout@v6
   #      - name: Build
   #        id: build
-  #        uses: vmactions/freebsd-vm@v0.1.6
+  #        uses: vmactions/freebsd-vm@v1
   #        env:
   #          DEBUG: napi:*
   #          RUSTUP_HOME: /usr/local/rustup
@@ -194,7 +194,7 @@ jobs:
   #            rm -rf node_modules
   #            rm -rf ../../target
   #      - name: Upload artifact
-  #        uses: actions/upload-artifact@v4
+  #        uses: actions/upload-artifact@v7
   #        with:
   #          name: bindings-freebsd
   #          path: packages/cli/${{ env.APP_NAME }}.*.node
@@ -216,17 +216,17 @@ jobs:
           - '20'
     runs-on: ${{ matrix.settings.host }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: npm i -g --force corepack
       - name: Setup node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node }}
           cache: 'pnpm'
       - name: Install dependencies
         run: pnpm i --frozen-lockfile --ignore-scripts
       - name: Download artifacts
-        uses: actions/download-artifact@v4.1.7
+        uses: actions/download-artifact@v7
         with:
           name: bindings-${{ matrix.settings.target }}
           path: 'packages/cli/'
@@ -247,17 +247,17 @@ jobs:
           - '20'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: npm i -g --force corepack
       - name: Setup node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node }}
           cache: 'pnpm'
       - name: Install dependencies
         run: pnpm i --frozen-lockfile --ignore-scripts
       - name: Download artifacts
-        uses: actions/download-artifact@v4.1.7
+        uses: actions/download-artifact@v7
         with:
           name: bindings-x86_64-unknown-linux-gnu
           path: 'packages/cli'
@@ -284,17 +284,17 @@ jobs:
     container:
       image: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-alpine
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: npm i -g --force corepack
       - name: Setup node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node }}
           cache: 'pnpm'
       - name: Install dependencies
         run: pnpm i --frozen-lockfile --ignore-scripts
       - name: Download artifacts
-        uses: actions/download-artifact@v4.1.7
+        uses: actions/download-artifact@v7
         with:
           name: bindings-x86_64-unknown-linux-musl
           path: 'packages/cli/'
@@ -327,17 +327,17 @@ jobs:
     steps:
       - run: docker run --rm --privileged multiarch/qemu-user-static:register --reset
         working-directory: ${{ github.workspace }}
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: List packages
         run: ls -R .
         shell: bash
       - name: Download aarch64-gnu artifacts
-        uses: actions/download-artifact@v4.1.7
+        uses: actions/download-artifact@v7
         with:
           name: bindings-aarch64-unknown-linux-gnu
           path: 'packages/cli'
       - name: Download armv7-gnueabihf artifacts
-        uses: actions/download-artifact@v4.1.7
+        uses: actions/download-artifact@v7
         with:
           name: bindings-armv7-unknown-linux-gnueabihf
           path: 'packages/cli/'
@@ -371,7 +371,7 @@ jobs:
       - test-linux-x64-musl-binding
       #- test-linux-arm-bindings
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: npm i -g --force corepack
       - name: Setup node
         uses: actions/setup-node@v6
@@ -381,7 +381,7 @@ jobs:
       - name: Install dependencies
         run: pnpm i --frozen-lockfile --ignore-scripts
       - name: Download all artifacts
-        uses: actions/download-artifact@v4.1.7
+        uses: actions/download-artifact@v7
         with:
           path: packages/cli/artifacts
       - name: Move artifacts
