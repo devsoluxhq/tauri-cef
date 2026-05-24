@@ -16,7 +16,11 @@ impl CefBrowserExt for cef::Browser {
       return cef::Rect::default();
     };
 
-    let parent = unsafe { nsview.superview().unwrap() };
+    // A webview detached from its window hierarchy has no superview; return
+    // default bounds instead of panicking.
+    let Some(parent) = (unsafe { nsview.superview() }) else {
+      return cef::Rect::default();
+    };
     let parent_frame = parent.frame();
     let webview_frame = nsview.frame();
 
@@ -37,7 +41,10 @@ impl CefBrowserExt for cef::Browser {
       return;
     };
 
-    let parent = unsafe { nsview.superview().unwrap() };
+    // No superview => the view isn't laid out yet; skip rather than panic.
+    let Some(parent) = (unsafe { nsview.superview() }) else {
+      return;
+    };
     let parent_frame = parent.frame();
 
     let origin = NSPoint {

@@ -172,6 +172,30 @@ fn install_notification_shim(global: &V8Value, origin: &str, source: Notificatio
     V8Propertyattribute::default(),
   );
 
+  // Stable debug hook: lets DevTools force the helper path even if the page
+  // later overwrites `window.Notification`. Kept in sync with the macOS
+  // bundled `cef-helper/src/notification.rs` copy of this shim so dev/Linux/
+  // Windows (run via `run_cef_helper_process`) and the macOS bundled helper
+  // expose the same renderer surface.
+  global.set_value_bykey(
+    Some(&CefString::from("__BEYPILOT_CEF_NOTIFICATION_CONSTRUCTOR")),
+    Some(&mut shim),
+    V8Propertyattribute::default(),
+  );
+
+  // Test/diagnostic entry point that fires a notification IPC directly,
+  // bypassing any page-level wrapping of `window.Notification`.
+  if let Some(mut fire_fn) = v8_value_create_function(
+    Some(&CefString::from("__beypilotFireNotification")),
+    Some(&mut handler),
+  ) {
+    global.set_value_bykey(
+      Some(&CefString::from("__beypilotFireNotification")),
+      Some(&mut fire_fn),
+      V8Propertyattribute::default(),
+    );
+  }
+
   if let Some(mut marker) = v8_value_create_bool(1) {
     global.set_value_bykey(
       Some(&CefString::from("__BEYPILOT_CEF_NOTIFICATION_SHIM")),
@@ -338,7 +362,11 @@ fn install_permissions_query_shim(context: &V8Context) {
   let mut exception: Option<V8Exception> = None;
   context.eval(
     Some(&CefString::from(js)),
-    Some(&CefString::from("tauri://notification-perm-shim")),
+    // Keep this script-source label in sync with the macOS `cef-helper` copy
+    // (`cef-helper/src/notification.rs`). Note: `cef-helper` logs via
+    // `eprintln!` rather than `log::` because that standalone crate has no
+    // `log` dependency — that divergence is intentional, this URL was not.
+    Some(&CefString::from("beypilot://notification-perm-shim")),
     0,
     Some(&mut retval),
     Some(&mut exception),
@@ -351,5 +379,65 @@ fn read_opt_str(obj: Option<&V8Value>, key: &str) -> Option<String> {
     Some(CefString::from(&v.string_value()).to_string())
   } else {
     None
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  /// The renderer shim (`NotifyV8Handler::execute`) and the browser-process
+  /// decoder (`BrowserClient::on_process_message_received` in `cef_impl.rs`)
+  /// must agree on the IPC message name, and the macOS bundled
+  /// `cef-helper/src/notification.rs` copy hard-codes the same value in its
+  /// `IPC_NAME` constant. Drift here makes notifications silently stop
+  /// dispatching, so pin the wire name.
+  #[test]
+  fn ipc_message_name_is_stable() {
+    assert_eq!(IPC_MESSAGE_NAME, "beypilot.notify");
+  }
+
+  /// Locks the argument-list layout shared with the decoder and the
+  /// `cef-helper` copy: 7 fields, `source` encoded as an int with
+  /// `Window == 0` / `ServiceWorker == 1`.
+  ///
+  /// Layout: [0]=source(int) [1]=title [2]=body [3]=icon [4]=tag
+  ///         [5]=silent(int) [6]=origin
+  #[test]
+  fn ipc_source_discriminants_match_wire_contract() {
+    assert_eq!(NotificationSource::Window as i32, 0);
+    assert_eq!(NotificationSource::ServiceWorker as i32, 1);
+  }
+
+  /// Guards against drift between this renderer shim and the macOS bundled copy
+  /// in `cef-helper/src/notification.rs`. The two live in separate workspaces and
+  /// can't share a module, so we embed the helper source at compile time and
+  /// assert the contract-critical tokens are present in both. If the helper is
+  /// edited out of sync (IPC name, arg layout, debug globals, perm-shim URL),
+  /// this test fails.
+  #[test]
+  fn cef_helper_shim_matches_ipc_contract() {
+    const HELPER_SRC: &str = include_str!("../../../cef-helper/src/notification.rs");
+
+    assert!(
+      HELPER_SRC.contains(IPC_MESSAGE_NAME),
+      "cef-helper must use the same IPC name ({IPC_MESSAGE_NAME})"
+    );
+    assert!(
+      HELPER_SRC.contains("list.set_size(7)"),
+      "cef-helper notification arg-list arity drifted from 7"
+    );
+    for token in [
+      "__BEYPILOT_CEF_NOTIFICATION_CONSTRUCTOR",
+      "__beypilotFireNotification",
+      "__BEYPILOT_CEF_NOTIFICATION_SHIM",
+      "__BEYPILOT_CEF_NOTIFICATION_ORIGIN",
+      "beypilot://notification-perm-shim",
+    ] {
+      assert!(
+        HELPER_SRC.contains(token),
+        "cef-helper notification shim is missing `{token}` — shims have drifted"
+      );
+    }
   }
 }

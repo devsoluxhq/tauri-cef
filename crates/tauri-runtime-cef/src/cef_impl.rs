@@ -910,7 +910,7 @@ wrap_permission_handler! {
       let origin = requesting_origin
         .map(|s| s.to_string())
         .unwrap_or_else(|| "<unknown>".to_string());
-      eprintln!(
+      log::debug!(
         "[cef-perm] media_access origin={origin} requested={req} ({req_names}) allowed={allow} ({allow_names})",
         req = requested_permissions,
         req_names = crate::permissions::format_media_bits(requested_permissions),
@@ -943,7 +943,7 @@ wrap_permission_handler! {
       let origin = requesting_origin
         .map(|s| s.to_string())
         .unwrap_or_else(|| "<unknown>".to_string());
-      eprintln!(
+      log::debug!(
         "[cef-perm] prompt origin={origin} requested={req} ({req_names}) -> {decision}",
         req = requested_permissions,
         req_names = crate::permissions::format_permission_types(requested_permissions),
@@ -2339,7 +2339,78 @@ fn handle_webview_message<T: UserEvent>(
       }
     }
     WebviewMessage::ClearAllBrowsingData => {
-      // TODO: Implement clear browsing data
+      // Clear cookies for *this webview's* isolated RequestContext (the
+      // `{root_cache}/webview-data/{hash}` context created in
+      // `request_context_from_webview_attributes`). We deliberately do NOT use
+      // the global cookie manager (`cookie_manager_get_global_manager`) here:
+      // that would wipe every other account's cookies too and defeat the
+      // per-webview isolation.
+      //
+      // What gets cleared, all scoped to THIS webview's browser/context so other
+      // accounts are unaffected:
+      //   1. Cookies — all cookies in this isolated context (every origin), via
+      //      its own RequestContext cookie manager.
+      //   2. HTTP cache — DevTools `Network.clearBrowserCache`.
+      //   3. DOM/local/IndexedDB/service-worker/cache storage for the current
+      //      origin — DevTools `Storage.clearDataForOrigin` (`storageTypes:all`).
+      //
+      // KNOWN LIMITATION: cookies (all origins) and HTTP cache are cleared for
+      // the whole context, but `Storage.clearDataForOrigin` only clears the
+      // CURRENT origin's storage. CEF 146 CDP has no documented per-context
+      // "clear all origins" call and no way to enumerate an isolated context's
+      // origins, so secondary origins in a multi-origin session (e.g. a
+      // provider plus its CDN/auth origins) retain DOM/IndexedDB/SW storage.
+      // For a guaranteed full wipe across EVERY origin, the consumer should
+      // close the webview and delete the on-disk cache directory returned by
+      // `crate::isolated_cache_path(root_cache, data_directory)`.
+      let host = get_browser(context, window_id, webview_id).and_then(|b| b.host());
+
+      // 1. Cookies (per-context, never the global manager).
+      match host
+        .as_ref()
+        .and_then(|h| h.request_context())
+        .and_then(|ctx| ctx.cookie_manager(Option::<&mut cef::CompletionCallback>::None))
+      {
+        Some(manager) => manager.delete_cookies(
+          Option::<&cef::CefString>::None,
+          Option::<&cef::CefString>::None,
+          Option::<&mut cef::DeleteCookiesCallback>::None,
+        ),
+        None => log::warn!(
+          "[cef-clear] no cookie manager for webview_id={webview_id}; cookies not cleared"
+        ),
+      }
+
+      // 2 + 3. Cache + per-origin storage via the embedded DevTools agent.
+      if let Some(host) = host.as_ref() {
+        let origin = get_main_frame(context, window_id, webview_id)
+          .map(|frame| cef::CefString::from(&frame.url()).to_string())
+          .and_then(|u| url::Url::parse(&u).ok())
+          .map(|u| u.origin().ascii_serialization());
+
+        let send_cdp = |value: serde_json::Value| match serde_json::to_vec(&value) {
+          Ok(bytes) => {
+            if host.send_dev_tools_message(Some(&bytes)) != 1 {
+              log::warn!("[cef-clear] DevTools clear command failed for webview_id={webview_id}");
+            }
+          }
+          Err(err) => log::warn!("[cef-clear] failed to encode DevTools command: {err}"),
+        };
+
+        send_cdp(serde_json::json!({ "id": 1, "method": "Network.clearBrowserCache" }));
+        match origin {
+          Some(origin) => send_cdp(serde_json::json!({
+            "id": 2,
+            "method": "Storage.clearDataForOrigin",
+            "params": { "origin": origin, "storageTypes": "all" }
+          })),
+          None => log::warn!(
+            "[cef-clear] no resolvable origin for webview_id={webview_id}; storage not cleared"
+          ),
+        }
+      }
+
+      log::info!("[cef-clear] cleared browsing data for webview_id={webview_id}");
     }
     // Getters
     WebviewMessage::Url(tx) => {
@@ -3555,7 +3626,10 @@ fn create_browser_window<T: UserEvent>(
     None,
     request_context.as_mut(),
   ) else {
-    eprintln!("Failed to create browser");
+    log::error!(
+      "[cef-create] failed to create browser window (window_id={window_id:?}); \
+       verify the isolated cache path (logged above at debug) is under the CEF root cache"
+    );
     return;
   };
 
@@ -3633,7 +3707,13 @@ pub(crate) fn create_window<T: UserEvent>(
         webview,
       );
     } else {
-      panic!("unexpected browser_window without webview config");
+      // Defensive guard: a `browser_window` is always paired with a webview
+      // config. If that invariant is ever violated, skip creating the malformed
+      // window and surface it in the log instead of crashing the whole app.
+      log::error!(
+        "[cef-window] refusing to create browser_window without webview config (label={label})"
+      );
+      return;
     }
   }
 
@@ -3652,7 +3732,10 @@ pub(crate) fn create_window<T: UserEvent>(
     context.clone(),
   );
 
-  let window = window_create_top_level(Some(&mut delegate)).expect("Failed to create window");
+  let Some(window) = window_create_top_level(Some(&mut delegate)) else {
+    log::error!("[cef-create] window_create_top_level returned None (window_id={window_id:?})");
+    return;
+  };
 
   context.windows.borrow_mut().insert(
     window_id,
@@ -3971,7 +4054,7 @@ pub(crate) fn create_webview<T: UserEvent>(
   {
     Some(w) => w,
     None => {
-      eprintln!("Window {window_id:?} not found or is a browser window when creating webview",);
+      log::error!("[cef-create] window {window_id:?} not found or is a browser window when creating webview");
       return;
     }
   };
@@ -4090,7 +4173,10 @@ pub(crate) fn create_webview<T: UserEvent>(
       Option::<&mut DictionaryValue>::None,
       request_context.as_mut(),
     ) else {
-      eprintln!("Failed to create browser");
+      log::error!(
+        "[cef-create] failed to create webview browser (window_id={window_id:?}, webview_id={webview_id}); \
+         verify the isolated cache path (logged above at debug) is under the CEF root cache"
+      );
       return;
     };
 
@@ -4181,15 +4267,23 @@ pub(crate) fn create_webview<T: UserEvent>(
       webview_attributes.clone(),
     );
 
-    let browser_view = browser_view_create(
+    let Some(browser_view) = browser_view_create(
       Some(&mut client),
       Some(&url),
       Some(&browser_settings),
       Option::<&mut DictionaryValue>::None,
       request_context.as_mut(),
       Some(&mut browser_view_delegate),
-    )
-    .expect("Failed to create browser view");
+    ) else {
+      // browser_view_create returns None when the RequestContext cache_path is
+      // not under the CEF root cache (the usual cause of a bad isolation
+      // mapping). Log + skip instead of panicking the process.
+      log::error!(
+        "[cef-create] browser_view_create returned None (window_id={window_id:?}, webview_id={webview_id}); \
+         verify the isolated cache path (logged above at debug) is under the CEF root cache"
+      );
+      return;
+    };
 
     let browser_webview = CefWebview::BrowserView(browser_view.clone());
 
@@ -4320,6 +4414,58 @@ fn browser_settings_from_webview_attributes(
   }
 }
 
+/// Maps a webview's requested `data_directory` to the on-disk cache directory
+/// actually used by its isolated CEF `RequestContext`.
+///
+/// CEF requires a context `cache_path` to be a child of the global root cache,
+/// so the literal `data_directory` cannot be used directly. The real location
+/// is `{root_cache}/webview-data/{sha256(data_directory)[..16]}`.
+///
+/// IMPORTANT for consumers: to wipe a webview's on-disk state (e.g. logout by
+/// deleting a directory), delete the path returned here — NOT the literal
+/// `data_directory`, which CEF never writes to. `ClearAllBrowsingData` uses the
+/// live DevTools/cookie path; on-disk deletion should happen only after the
+/// webview/browser is closed and its file handles released.
+pub(crate) fn isolated_cache_path_for(
+  root_cache: &str,
+  data_directory: &std::path::Path,
+) -> std::path::PathBuf {
+  let mut hasher = Sha256::new();
+  hasher.update(data_directory.to_string_lossy().as_bytes());
+  let key: String = hasher
+    .finalize()
+    .iter()
+    .take(16)
+    .map(|byte| format!("{byte:02x}"))
+    .collect();
+  std::path::Path::new(root_cache)
+    .join("webview-data")
+    .join(key)
+}
+
+#[cfg(test)]
+mod isolated_cache_tests {
+  use super::isolated_cache_path_for;
+  use std::path::Path;
+
+  #[test]
+  fn maps_under_root_webview_data() {
+    let p = isolated_cache_path_for("/root/cache", Path::new("/data/acct_1"));
+    assert!(p.starts_with("/root/cache/webview-data"));
+    // 16 bytes hex == 32 chars for the leaf component.
+    assert_eq!(p.file_name().unwrap().to_string_lossy().len(), 32);
+  }
+
+  #[test]
+  fn is_deterministic_and_distinct_per_directory() {
+    let a1 = isolated_cache_path_for("/root", Path::new("/data/acct_1"));
+    let a2 = isolated_cache_path_for("/root", Path::new("/data/acct_1"));
+    let b = isolated_cache_path_for("/root", Path::new("/data/acct_2"));
+    assert_eq!(a1, a2, "same data_directory must map to the same cache dir");
+    assert_ne!(a1, b, "distinct data_directories must be isolated");
+  }
+}
+
 fn request_context_from_webview_attributes<T: UserEvent>(
   context: &Context<T>,
   webview_attributes: &WebviewAttributes,
@@ -4327,16 +4473,50 @@ fn request_context_from_webview_attributes<T: UserEvent>(
   custom_protocol_scheme: &str,
   _initialization_scripts: &[CefInitScript],
 ) -> Option<RequestContext> {
-  let global_context =
-    request_context_get_global_context().expect("Failed to get global request context");
+  let Some(global_context) = request_context_get_global_context() else {
+    // Should never happen after CEF init; degrade to the default request context
+    // (None) for this webview rather than crashing the whole browser process.
+    log::error!(
+      "[cef-cache] global request context unavailable; webview will use the default context"
+    );
+    return None;
+  };
 
   let cache_path: CefStringUtf16 = if webview_attributes.incognito {
     CefStringUtf16::from("")
-  } else if let Some(_data_directory) = &webview_attributes.data_directory {
-    // TODO: setting a custom data directory must be a child of the root data directory, but it returns None on browser_view_create
-    eprintln!("data directory is not yet implemented");
-    (&global_context.cache_path()).into()
-    // CefStringUtf16::from(data_directory.to_string_lossy().as_ref())
+  } else if let Some(data_directory) = &webview_attributes.data_directory {
+    // CEF requires a RequestContext `cache_path` to be either equal to or a
+    // *child* of the global root cache path (here `CefSettings.cache_path`,
+    // which doubles as `root_cache_path` because the latter is left unset at
+    // init). Passing an arbitrary absolute `data_directory` that lives outside
+    // that root makes `browser_view_create` return None — which is why the old
+    // code silently fell back to the shared global cache. That fallback broke
+    // per-webview isolation: every `acct_*` provider webview ended up sharing
+    // cookies/storage/cache.
+    //
+    // Map each requested `data_directory` to a stable subdirectory *under* the
+    // root cache, keyed by a hash of the requested path, so distinct
+    // directories get isolated state while still satisfying CEF's child-path
+    // constraint.
+    //
+    // NOTE: data now lives under `{root_cache}/webview-data/{hash}`, not at the
+    // literal `data_directory`. Consumers that "log out" by deleting the
+    // literal `data_directory` on disk will NOT clear this state — use a
+    // RequestContext clear (see `WebviewMessage::ClearAllBrowsingData`) instead.
+    let root = CefString::from(&global_context.cache_path()).to_string();
+    let isolated = isolated_cache_path_for(&root, data_directory);
+    if let Err(err) = std::fs::create_dir_all(&isolated) {
+      log::error!(
+        "[cef-cache] failed to create isolated webview cache dir {}: {err}",
+        isolated.display()
+      );
+    }
+    log::debug!(
+      "[cef-cache] mapped webview data_directory={} -> isolated cache {}",
+      data_directory.display(),
+      isolated.display()
+    );
+    CefStringUtf16::from(isolated.to_string_lossy().as_ref())
   } else {
     (&global_context.cache_path()).into()
   };
@@ -4400,7 +4580,7 @@ fn apply_titlebar_style(window: &cef::Window, style: TitleBarStyle, hidden_title
       ns_window.setStyleMask(mask);
     }
     unknown => {
-      eprintln!("unknown title bar style applied: {unknown}");
+      log::warn!("[cef-titlebar] unknown title bar style applied: {unknown}");
     }
   }
 
@@ -4428,7 +4608,11 @@ pub(crate) fn ensure_valid_content_view(
   use objc2_app_kit::NSView;
 
   let nsview = unsafe { Retained::<NSView>::retain(window_handle as _) };
-  let nsview = nsview.expect("NSView is null");
+  let Some(nsview) = nsview else {
+    // Null/invalid handle: nothing to validate — hand the original back.
+    log::warn!("[cef-content-view] null NSView handle; skipping content-view validation");
+    return window_handle;
+  };
 
   let class = nsview.class().name().to_string_lossy();
   let subviews = unsafe { nsview.subviews() };
@@ -4457,7 +4641,10 @@ pub(crate) fn ensure_valid_content_view(
     }
 
     // Set the new generic NSView as the content view of the window
-    let nswindow = nsview.window().expect("NSWindow is null");
+    let Some(nswindow) = nsview.window() else {
+      log::warn!("[cef-content-view] NSView has no window; skipping content-view replacement");
+      return window_handle;
+    };
     nswindow.setContentView(Some(&generic_nsview));
 
     // Return the new content view pointer
@@ -4496,7 +4683,14 @@ fn apply_traffic_light_position(window: *mut std::ffi::c_void, position: &Positi
   let pos = position.to_logical::<f64>(nswindow.backingScaleFactor());
   let (x, y) = (pos.x, pos.y);
 
-  let title_bar_container_view = unsafe { close.superview().unwrap().superview().unwrap() };
+  // close -> title bar -> title bar container. If the standard-button view
+  // hierarchy is not what we expect, skip positioning instead of panicking.
+  let Some(title_bar_container_view) =
+    (unsafe { close.superview().and_then(|view| view.superview()) })
+  else {
+    log::warn!("[cef-titlebar] unexpected NSView hierarchy; skipping title-bar positioning");
+    return;
+  };
 
   let close_rect = NSView::frame(&close);
   let title_bar_frame_height = close_rect.size.height + y;

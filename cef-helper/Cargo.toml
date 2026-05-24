@@ -17,3 +17,13 @@ sandbox = ["cef/sandbox"]
 
 # Ensure this crate is NOT treated as part of the repo workspace.
 [workspace]
+
+# This crate is its own workspace (it is built standalone by
+# `tauri-bundler/build.rs` and embedded into the macOS `.app`), so it does NOT
+# inherit the main workspace's `[patch.crates-io]`. Mirror the workspace's
+# `cef-dll-sys` patch here so the bundled macOS helper links the SAME CEF sys
+# crate as the main app and can't drift onto a different build. (The branch is a
+# Windows location fix, so it is a no-op on macOS, but keeping the source
+# identical avoids two divergent cef-dll-sys builds.)
+[patch.crates-io]
+cef-dll-sys = { git = "https://github.com/tauri-apps/cef-rs", branch = "fix/146-location-windows" }

@@ -226,12 +226,27 @@ wrap_resource_handler! {
             .get_mut(CONTENT_SECURITY_POLICY);
 
           if let Some(csp) = csp {
-            let csp_string = csp.to_str().unwrap().to_string();
-            let new_csp = csp_inject_initialization_scripts_hashes(
-              csp_string,
-              &initialization_scripts,
-            );
-            *csp = HeaderValue::from_str(&new_csp).unwrap();
+            // The existing CSP header may not be valid UTF-8/visible-ASCII, and
+            // the rewritten value may not be a valid header value. In either
+            // case, skip the CSP rewrite and keep the original header rather
+            // than panicking on attacker-influenced response headers.
+            match csp.to_str() {
+              Ok(csp_string) => {
+                let new_csp = csp_inject_initialization_scripts_hashes(
+                  csp_string.to_string(),
+                  &initialization_scripts,
+                );
+                match HeaderValue::from_str(&new_csp) {
+                  Ok(value) => *csp = value,
+                  Err(err) => log::warn!(
+                    "[cef-csp] skipping CSP rewrite: invalid rewritten header value: {err}"
+                  ),
+                }
+              }
+              Err(err) => log::warn!(
+                "[cef-csp] skipping CSP rewrite: existing header is not valid ASCII: {err}"
+              ),
+            }
           }
 
 
@@ -251,7 +266,19 @@ wrap_resource_handler! {
           .unwrap_or(http::Method::GET);
 
         std::thread::spawn(move || {
-          let mut http_request = http::Request::builder().method(method).uri(url.as_str()).body(data).unwrap();
+          let mut http_request = match http::Request::builder()
+            .method(method)
+            .uri(url.as_str())
+            .body(data)
+          {
+            Ok(http_request) => http_request,
+            Err(err) => {
+              // Invalid method/URI for an otherwise-accepted scheme request.
+              // Drop the request instead of panicking the browser process.
+              log::warn!("[cef-request] dropping request with invalid URI {url}: {err}");
+              return;
+            }
+          };
           *http_request.headers_mut() = headers;
           // handler is Arc<Box<UriSchemeProtocol>>, so we need to dereference to call it
           (**handler)(&label, http_request, responder);
@@ -418,13 +445,26 @@ fn get_request_headers(request: &mut Request) -> HeaderMap {
 
   request.header_map(Some(&mut map));
 
-  // Iterate through all entries
+  // Iterate through all entries. Header names/values come from the network and
+  // may be malformed; skip invalid entries with a warning rather than panicking
+  // the whole browser process.
   for (name, value) in map {
+    let header_name = match HeaderName::from_bytes(name.as_bytes()) {
+      Ok(header_name) => header_name,
+      Err(err) => {
+        log::warn!("[cef-headers] skipping request header with invalid name {name:?}: {err}");
+        continue;
+      }
+    };
     for v in value {
-      headers.append(
-        HeaderName::from_bytes(name.as_bytes()).unwrap(),
-        HeaderValue::from_str(&v).unwrap(),
-      );
+      match HeaderValue::from_str(&v) {
+        Ok(header_value) => {
+          headers.append(header_name.clone(), header_value);
+        }
+        Err(err) => {
+          log::warn!("[cef-headers] skipping invalid value for header {name:?}: {err}");
+        }
+      }
     }
   }
 

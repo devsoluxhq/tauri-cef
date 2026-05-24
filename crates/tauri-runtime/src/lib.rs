@@ -167,6 +167,14 @@ pub enum Error {
   FailedToRemoveDataStore,
   #[error("Could not find the webview runtime, make sure it is installed")]
   WebviewRuntimeNotInstalled,
+  /// The GTK window/container is not available under the active runtime.
+  ///
+  /// The CEF runtime does not expose a GTK `ApplicationWindow`/`Box`, so the
+  /// Linux-only `gtk_window()` / `default_vbox()` dispatch methods return this
+  /// error instead of panicking. Callers that use `?` get a recoverable error;
+  /// callers that probe with `if let Ok(..)` degrade gracefully.
+  #[error("GTK window is not available under the active webview runtime")]
+  GtkWindowNotAvailable,
 }
 
 /// Result type.

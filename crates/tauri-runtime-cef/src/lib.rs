@@ -66,6 +66,67 @@ pub fn webview_version() -> Result<String> {
   ))
 }
 
+/// The global CEF root cache directory the runtime uses for `identifier`.
+///
+/// Mirrors the resolution in `CefRuntime::new`: honors `BEYPILOT_CEF_CACHE_PATH`
+/// when set and non-empty, otherwise `{cache_dir}/{identifier}/cef`. Exposed so
+/// consumers can compute the same root the runtime uses (e.g. to pass to
+/// [`isolated_cache_path`]).
+pub fn cef_root_cache_path(identifier: &str) -> std::path::PathBuf {
+  std::env::var_os("BEYPILOT_CEF_CACHE_PATH")
+    .map(std::path::PathBuf::from)
+    .filter(|path| !path.as_os_str().is_empty())
+    .unwrap_or_else(|| {
+      let cache_base = dirs::cache_dir().unwrap_or_else(std::env::temp_dir);
+      cache_base.join(identifier).join("cef")
+    })
+}
+
+/// The on-disk cache directory CEF actually uses for a webview created with the
+/// given `data_directory`.
+///
+/// CEF requires a `RequestContext` cache path to be a child of the global root
+/// cache, so a webview's literal `data_directory` is **never** written to.
+/// Instead, state lives under `{root_cache}/webview-data/{hash(data_directory)}`.
+/// Consumers that wipe a webview's state on logout must delete the path returned
+/// here — after closing the webview so file handles are released — not the
+/// literal `data_directory`. `root_cache` is typically
+/// [`cef_root_cache_path(identifier)`](cef_root_cache_path).
+///
+/// Contract: the runtime hashes under the root cache CEF reports for the global
+/// request context, which equals the configured `cache_path` (i.e.
+/// `cef_root_cache_path(identifier)`) as long as CEF returns it verbatim — the
+/// normal case. The runtime logs the mapped path at `debug` (`[cef-cache]`);
+/// verify the consumer-computed path matches on first run if you depend on the
+/// on-disk delete for logout.
+pub fn isolated_cache_path(
+  root_cache: &std::path::Path,
+  data_directory: &std::path::Path,
+) -> std::path::PathBuf {
+  cef_impl::isolated_cache_path_for(&root_cache.to_string_lossy(), data_directory)
+}
+
+#[cfg(test)]
+mod cache_path_api_tests {
+  use super::isolated_cache_path;
+  use std::path::Path;
+
+  #[test]
+  fn isolated_cache_path_is_under_root_webview_data() {
+    let p = isolated_cache_path(Path::new("/root/cef"), Path::new("/data/acct_1"));
+    assert!(p.starts_with("/root/cef/webview-data"));
+  }
+
+  #[test]
+  fn isolated_cache_path_distinct_and_deterministic() {
+    let a1 = isolated_cache_path(Path::new("/r"), Path::new("/d/acct_1"));
+    let a2 = isolated_cache_path(Path::new("/r"), Path::new("/d/acct_1"));
+    let b = isolated_cache_path(Path::new("/r"), Path::new("/d/acct_2"));
+    assert_eq!(a1, a2);
+    assert_ne!(a1, b);
+  }
+}
+
 #[macro_export]
 macro_rules! getter {
   ($self: ident, $rx: expr, $message: expr) => {{
@@ -279,7 +340,14 @@ impl<T: UserEvent> Clone for Message<T> {
   fn clone(&self) -> Self {
     match self {
       Self::UserEvent(t) => Self::UserEvent(t.clone()),
-      _ => unimplemented!(),
+      // Only `UserEvent` is cloneable. The other variants carry non-cloneable
+      // payloads (e.g. `Task` holds a `Box<dyn FnOnce>`); the `Clone` impl
+      // exists solely to satisfy generic bounds and these variants must never
+      // be cloned in practice. Fail loudly with context if that ever happens.
+      _ => unreachable!(
+        "Message::clone is only valid for the UserEvent variant; other variants \
+         carry non-cloneable payloads and must never be cloned"
+      ),
     }
   }
 }
@@ -630,7 +698,13 @@ impl<T: UserEvent> RuntimeHandle<T> for CefRuntimeHandle<T> {
   }
 
   fn cursor_position(&self) -> Result<PhysicalPosition<f64>> {
-    Ok(PhysicalPosition::new(0.0, 0.0))
+    // Not yet implemented for the CEF runtime. Returning a fake (0,0) silently
+    // misreports the cursor location; surface a real error instead so callers
+    // can fall back. A correct implementation needs platform APIs (macOS
+    // `NSEvent::mouseLocation` + primary-screen flip, Windows `GetCursorPos`,
+    // Linux X11 `XQueryPointer`) and the matching dependency features — tracked
+    // as a follow-up. No current BeyPilot caller depends on this.
+    Err(tauri_runtime::Error::FailedToGetCursorPosition)
   }
 }
 
@@ -1505,7 +1579,11 @@ impl<T: UserEvent> WindowDispatch<T> for CefWindowDispatcher<T> {
     target_os = "openbsd"
   ))]
   fn gtk_window(&self) -> Result<gtk::ApplicationWindow> {
-    unimplemented!()
+    // The CEF runtime has no GTK window. Return a recoverable error rather
+    // than panicking: tauri core calls this via `?` (e.g. `transient_for`,
+    // menu init) and crashing the whole process on Linux is worse than a
+    // surfaced error.
+    Err(tauri_runtime::Error::GtkWindowNotAvailable)
   }
 
   #[cfg(any(
@@ -1516,7 +1594,8 @@ impl<T: UserEvent> WindowDispatch<T> for CefWindowDispatcher<T> {
     target_os = "openbsd"
   ))]
   fn default_vbox(&self) -> Result<gtk::Box> {
-    unimplemented!()
+    // See `gtk_window` above: no GTK container exists under CEF.
+    Err(tauri_runtime::Error::GtkWindowNotAvailable)
   }
 
   fn window_handle(
@@ -2004,13 +2083,7 @@ impl<T: UserEvent> CefRuntime<T> {
 
     let _ = cef::api_hash(cef::sys::CEF_API_VERSION_LAST, 0);
 
-    let cache_path = std::env::var_os("BEYPILOT_CEF_CACHE_PATH")
-      .map(std::path::PathBuf::from)
-      .filter(|path| !path.as_os_str().is_empty())
-      .unwrap_or_else(|| {
-        let cache_base = dirs::cache_dir().unwrap_or_else(std::env::temp_dir);
-        cache_base.join(&runtime_args.identifier).join("cef")
-      });
+    let cache_path = cef_root_cache_path(&runtime_args.identifier);
 
     // Ensure the cache directory exists
     let _ = create_dir_all(&cache_path);
@@ -2410,7 +2483,13 @@ impl<T: UserEvent> Runtime<T> for CefRuntime<T> {
   }
 
   fn cursor_position(&self) -> Result<PhysicalPosition<f64>> {
-    Ok(PhysicalPosition::new(0.0, 0.0))
+    // Not yet implemented for the CEF runtime. Returning a fake (0,0) silently
+    // misreports the cursor location; surface a real error instead so callers
+    // can fall back. A correct implementation needs platform APIs (macOS
+    // `NSEvent::mouseLocation` + primary-screen flip, Windows `GetCursorPos`,
+    // Linux X11 `XQueryPointer`) and the matching dependency features — tracked
+    // as a follow-up. No current BeyPilot caller depends on this.
+    Err(tauri_runtime::Error::FailedToGetCursorPosition)
   }
 }
 
