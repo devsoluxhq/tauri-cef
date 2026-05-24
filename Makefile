@@ -1,5 +1,18 @@
 VERSION ?= 1.0.0
 
+audit:
+	cargo audit
+
+audit-install:
+	cargo install cargo-audit
+	cargo audit --version
+
+fmt:
+	cargo fmt --all --check
+
+build-verification:
+	cargo check -p tauri-macos-sign -p tauri-bundler -p tauri-cli
+
 # -----------------------------------------------------------------------------
 # GitHub — CLI auth, local repo init, gh repo create, push (override as needed)
 # -----------------------------------------------------------------------------

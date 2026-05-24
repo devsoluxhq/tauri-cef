@@ -4054,7 +4054,9 @@ pub(crate) fn create_webview<T: UserEvent>(
   {
     Some(w) => w,
     None => {
-      log::error!("[cef-create] window {window_id:?} not found or is a browser window when creating webview");
+      log::error!(
+        "[cef-create] window {window_id:?} not found or is a browser window when creating webview"
+      );
       return;
     }
   };

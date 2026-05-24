@@ -8,4 +8,25 @@ ignore = [
   "RUSTSEC-2024-0370",
   # time crate can't be updated in the repo because of MSRV, users are unaffected
   "RUSTSEC-2026-0009",
+  # gtk-rs GTK3 bindings are unmaintained; wry/tao still depend on gtk3 (no gtk4 timeline yet)
+  "RUSTSEC-2024-0411",
+  "RUSTSEC-2024-0412",
+  "RUSTSEC-2024-0413",
+  "RUSTSEC-2024-0414",
+  "RUSTSEC-2024-0415",
+  "RUSTSEC-2024-0416",
+  "RUSTSEC-2024-0417",
+  "RUSTSEC-2024-0418",
+  "RUSTSEC-2024-0419",
+  "RUSTSEC-2024-0420",
+  # glib 0.18.5 unsoundness; fixed upstream by migrating to gtk4
+  "RUSTSEC-2024-0429",
+  # fxhash is unmaintained (transitive via kuchikiki/selectors in tauri-utils)
+  "RUSTSEC-2025-0057",
+  # rand 0.7 unsoundness (build-time dep via selectors/phf in tauri-utils)
+  "RUSTSEC-2026-0097",
+  # paste is unmaintained (transitive via specta function feature in tauri)
+  "RUSTSEC-2024-0436",
+  # rustls-pemfile is unmaintained (transitive via apple-codesign -> tungstenite)
+  "RUSTSEC-2025-0134",
 ]
